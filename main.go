@@ -1,29 +1,30 @@
 package main
 
 import (
+        "crypto/rand"
         "bufio"
         "fmt"
+        "io"
         "net"
+        "net/http"
         "os"
         "strings"
-        "time"
 )
 
 // port configs
-var tcpPort  = 9091
-var httpPort = 9090
+var tcpPort  = ":9091"
+var httpPort = ":9090"
 
 
 // our temporary storage
-var dataBuffer = make(map[string]byte)
-
-
+var dataBuffer = make(map[string][]byte)
 
 
 func main() {
     // start the controle port
-    startControlePort()
+    go startControlePort()
     
+    fmt.Println(string(tcpPort))
     // open tcp server
     l, err := net.Listen("tcp", tcpPort)
     if err != nil {
@@ -40,7 +41,7 @@ func main() {
             os.Exit(1)
         }
         // Handle connections in a new goroutine.
-        go handleRequest(conn)
+        go handleConnection(conn)
     }
     
 }    
@@ -51,11 +52,11 @@ func startControlePort() {
     
 	// Route: getIdent
 	h.HandleFunc("/getIdent", func(w http.ResponseWriter, r *http.Request) {
-        var uuid = ""
-        var check = true
-        for true == check {
+        var i = 10
+        for 0 < i {
+            fmt.Println("trying to generate uuid")
             // get uuid
-            uuid,err = getUUID()
+            uuid,err := getUUID()
             if err != nil {
                 respond("error generating UUID", 500, w)
                 return
@@ -63,20 +64,23 @@ func startControlePort() {
             
             // lets check if the uuid is already used,
             // if not we gonne create the uuid with a 0byte array
-            if _, ok := dataBuffer[uuid]; ok {
+            if val, ok := dataBuffer[uuid]; !ok {
+                fmt.Println(val)
                 dataBuffer[uuid] = make([]byte,0)
-                check = false
+                respond(uuid, 200, w)
+                return
             }
             
+            i--
         }
         
-        // k we got a UUID lets return it
-		respond(uuid, 200, w)
+        respond("error generating UUID", 500, w)
+        return
 	})
     
     h.HandleFunc("/getData", func(w http.ResponseWriter, r *http.Request) {
         // prepare ret string
-        ret := ""
+        //ret := ""
         // lets get the uri qry params
         tmpParams := r.URL.Query()
         // read the uuid from params
@@ -86,17 +90,19 @@ func startControlePort() {
             respond("missing params",500,w)
             return
         }
+        respond(strings.Join(val,""),200,w)
     })
     
-    return
+    http.ListenAndServe(httpPort, h)
 }
 
 func handleConnection(conn net.Conn){
     // first we read the first 10 bytes to determine a identifier delimnited by \n
-    uuid, err := bufio.NewReader(buf).ReadString('\n')
+    uuid, err := bufio.NewReader(conn).ReadString('\n')
     if err != nil {
         fmt.Println("Error reading:", err.Error())
     }
+    fmt.Println(uuid)
     // Send a response back to person contacting us.
     conn.Write([]byte("Message received."))
     // Close the connection when you're done with it.
@@ -107,6 +113,7 @@ func getUUID() (string, error) {
 	uuid := make([]byte, 16)
 	n, err := io.ReadFull(rand.Reader, uuid)
 	if n != len(uuid) || err != nil {
+        fmt.Println("we encounter the uid error")
 		return "", err
 	}
 	// variant bits; see section 4.1.1
@@ -122,7 +129,7 @@ func respond(message string, responseCode int, w http.ResponseWriter) {
 	messageBytes := []byte(message)
 	_, err := w.Write(messageBytes)
 	if nil != err {
-		config.Logger.Print(err)
+		fmt.Println("couldnt respond on http :(")
 	}
 }
 
